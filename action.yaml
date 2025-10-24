@@ -28,17 +28,19 @@ runs:
       shell: bash
       # jq is assumed to be pre-installed on standard GitHub runners (ubuntu-latest)
       run: |
-        python3 -m pip install --upgrade pip
-        pip install detect-secrets
+        echo "::group::Installing detect-secrets"
+        python3 -m pip install --upgrade pip --quiet
+        pip install detect-secrets --quiet
+        echo "::endgroup::"
 
-    - name: Run detect-secrets scan and generate SARIF
+    - name: Scan for secrets and generate SARIF report
       id: secret-scan
       shell: bash
       env:
         # Pass the regex pattern to the shell environment to avoid quoting issues with run: |
         EXCLUDE_REGEX: ${{ inputs.exclude-files-regex }} 
       run: |
-        # Base command: always include --all-files so we scan everything under scan-path
+        # Base command
         SCAN_CMD=(
           detect-secrets
           scan
@@ -53,33 +55,40 @@ runs:
         SCAN_CMD+=(--disable-plugin KeywordDetector)
 
         # Append --exclude-files if that input is provided
-        if [ -n "${EXCLUDE_REGEX}" ]; then
+        if [[ -n "${EXCLUDE_REGEX}" ]]; then
           SCAN_CMD+=(--exclude-files "${EXCLUDE_REGEX}")
-          echo "Excluding files from scan: ${EXCLUDE_REGEX}"
+          echo "::debug::Excluding files matching pattern: ${EXCLUDE_REGEX}"
         fi
 
         # Execute the scan command and output to JSON
+        echo "::group::Scanning for secrets in ${{ inputs.scan-path }}"
         "${SCAN_CMD[@]}" > detect-secrets-output.json
+        echo "::endgroup::"
 
         # Use the action's internal path to find the JQ script
         jq -f "${{ github.action_path }}/detect-secrets-to-sarif.jq" detect-secrets-output.json > detect-secrets-results.sarif
 
-        SECRET_COUNT=$(jq '.runs[].results | length' detect-secrets-results.sarif)
-        echo "Secret findings: $SECRET_COUNT"
-        echo "secret_count=$SECRET_COUNT" >> $GITHUB_OUTPUT
+        SECRET_COUNT=$(jq '.runs[].results | length' detect-secrets-results.sarif || echo 0)
+        echo "secret_count=${SECRET_COUNT}" >> $GITHUB_OUTPUT
 
-        # Provide clear output and handle build breaking logic
-        if [ "$SECRET_COUNT" -gt 0 ]; then
-          ERROR_MESSAGE="The secret scanner found $SECRET_COUNT hardcoded secrets. Review the Code Scanning results or detect-secrets-results.sarif for details."
+        if [[ "${SECRET_COUNT}" -gt 0 ]]; then
+          # Provide different guidance based on SARIF upload setting
+          if [[ "${{ inputs.upload-sarif }}" == "true" ]]; then
+            DETAILS_MESSAGE="Check the Security tab → Secret Scanning for detailed findings."
+          else
+            DETAILS_MESSAGE="Review the detect-secrets-results.sarif file for detailed findings."
+          fi
 
-          if [ "${{ inputs.fail-on-detection }}" = "true" ]; then
+          ERROR_MESSAGE="The secret scanner found ${SECRET_COUNT} hardcoded secrets. ${DETAILS_MESSAGE}"
+
+          if [[ "${{ inputs.fail-on-detection }}" == "true" ]]; then
             echo "::error title=Hardcoded Secrets Found::${ERROR_MESSAGE}"
             exit 1
           else
             echo "::warning title=Hardcoded Secrets Found::${ERROR_MESSAGE}"
           fi
         else
-          echo "::notice::Secret scanning completed successfully. No hardcoded secrets were detected."
+          echo "::notice title=Secret Scanning Complete::No hardcoded secrets were detected."
         fi
 
     - name: Upload SARIF to GitHub Code Scanning
