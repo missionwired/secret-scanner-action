@@ -4,7 +4,7 @@ inputs:
   scan-path:
     description: "The directory to scan for secrets (e.g., ./src/dist). Defaults to ./build"
     required: false
-    default: "./build"
+    default: "."
 
   upload-sarif:
     description: "Whether to upload SARIF results to GitHub Code Scanning (true/false)."
@@ -21,9 +21,44 @@ inputs:
     required: false
     default: "true"
 
+  debug-mode:
+    description: "Enable verbose diagnostic logging and artifact upload (true/false)."
+    required: false
+    default: "false"
+
+  always-upload:
+    description: "Upload SARIF even if zero findings (true/false)."
+    required: false
+    default: "false"
+
+  wait-for-processing:
+    description: "Wait for SARIF ingestion before completing (true/false)."
+    required: false
+    default: "true"
+
+  checkout-path:
+    description: "Path repository was checked out to (for path relativization)."
+    required: false
+    default: "${{ github.workspace }}"
+
 runs:
   using: "composite"
   steps:
+    - name: Debug Context
+      if: ${{ inputs.debug-mode == 'true' }}
+      shell: bash
+      run: |
+        echo "::group::Debug Context"
+        echo "Event: $GITHUB_EVENT_NAME"
+        echo "Ref: $GITHUB_REF"
+        echo "SHA: $GITHUB_SHA"
+        echo "Workspace: $GITHUB_WORKSPACE"
+        echo "Scan Path: ${{ inputs.scan-path }}"
+        echo "Exclude Regex: ${{ inputs.exclude-files-regex }}"
+        echo "Always Upload: ${{ inputs.always-upload }}"
+        echo "Wait For Processing: ${{ inputs.wait-for-processing }}"
+        echo "::endgroup::"
+
     - name: Install detect-secrets
       shell: bash
       # jq is assumed to be pre-installed on standard GitHub runners (ubuntu-latest)
@@ -39,6 +74,7 @@ runs:
       env:
         # Pass the regex pattern to the shell environment to avoid quoting issues with run: |
         EXCLUDE_REGEX: ${{ inputs.exclude-files-regex }} 
+        DEBUG_MODE: ${{ inputs.debug-mode }}
       run: |
         # Base command
         SCAN_CMD=(
@@ -68,22 +104,27 @@ runs:
         # Use the action's internal path to find the JQ script
         jq -f "${{ github.action_path }}/detect-secrets-to-sarif.jq" detect-secrets-output.json > detect-secrets-results.sarif
 
-        SECRET_COUNT=$(jq '.runs[].results | length' detect-secrets-results.sarif || echo 0)
+        SECRET_COUNT=$(jq '[.runs[].results | length] | add' detect-secrets-results.sarif 2>/dev/null || echo 0)
         echo "secret_count=${SECRET_COUNT}" >> $GITHUB_OUTPUT
 
+        if [[ "${DEBUG_MODE}" == "true" ]]; then
+          echo "::group::SARIF Diagnostics"
+          echo "Secret Count: ${SECRET_COUNT}"
+          wc -c detect-secrets-results.sarif | awk '{print "File Size (bytes): "$1}'
+          head -n 30 detect-secrets-results.sarif || true
+          echo "::endgroup::"
+        fi
+
         if [[ "${SECRET_COUNT}" -gt 0 ]]; then
-          # Provide different guidance based on SARIF upload setting
           if [[ "${{ inputs.upload-sarif }}" == "true" ]]; then
             DETAILS_MESSAGE="Check the Security tab → Secret Scanning for detailed findings."
           else
             DETAILS_MESSAGE="Review the detect-secrets-results.sarif file for detailed findings."
           fi
-
           ERROR_MESSAGE="The secret scanner found ${SECRET_COUNT} hardcoded secrets. ${DETAILS_MESSAGE}"
-
           if [[ "${{ inputs.fail-on-detection }}" == "true" ]]; then
+            echo "fail_after_upload=true" >> $GITHUB_OUTPUT
             echo "::error title=Hardcoded Secrets Found::${ERROR_MESSAGE}"
-            exit 1
           else
             echo "::warning title=Hardcoded Secrets Found::${ERROR_MESSAGE}"
           fi
@@ -93,8 +134,25 @@ runs:
 
     - name: Upload SARIF to GitHub Code Scanning
       # Only runs if 'upload-sarif' is true (for MW) and secrets were found
-      if: ${{ inputs.upload-sarif == 'true' && steps.secret-scan.outputs.secret_count > 0 }}
+      if: ${{ inputs.upload-sarif == 'true' && (inputs.always-upload == 'true' || steps.secret-scan.outputs.secret_count > 0) }}
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: detect-secrets-results.sarif
         category: detect-secrets
+        wait-for-processing: ${{ inputs.wait-for-processing }}
+        checkout_path: ${{ inputs.checkout-path }}
+
+    - name: SARIF Artifact (debug only)
+      if: ${{ inputs.debug-mode == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: detect-secrets-sarif
+        path: detect-secrets-results.sarif
+        retention-days: 5
+
+    - name: Fail if secrets were detected
+      if: ${{ steps.secret-scan.outputs.fail_after_upload == 'true' }}
+      shell: bash
+      run: |
+        echo "Failing after SARIF upload due to detected secrets."
+        exit 1
