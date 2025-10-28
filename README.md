@@ -51,15 +51,25 @@ jobs:
 
 | Input | Description | Default | Required |
 |-------|-------------|---------|----------|
-| `scan-path` | Directory to scan for secrets | `.` | No |
-| `upload-sarif` | Upload results to GitHub Code Scanning | `true` | No |
-| `exclude-files-regex` | Regex pattern for files to exclude | `""` | No |
-| `fail-on-detection` | Fail workflow if secrets are found | `true` | No |
+| `scan-path` | Directory to scan (defaults repo root) | `.` | No |
+| `upload-sarif` | Upload SARIF to Code Scanning | `true` | No |
+| `exclude-files-regex` | Single regex for excluding files | `""` | No |
+| `fail-on-detection` | Fail job when findings > 0 | `true` | No |
+| `debug-mode` | Emit extra diagnostic output | `false` | No |
+| `always-upload` | Upload SARIF even if 0 findings | `false` | No |
+| `wait-for-processing` | Wait for SARIF ingestion to finish | `true` | No |
+| `checkout-path` | Path repo was checked out to | `${{ github.workspace }}` | No |
+| `detect-secrets-version` | Pin detect-secrets version (blank = latest) | `` | No |
 
 ## Outputs
 
 Outputs:
 - `secret_count`: Total number of findings (robustly summed across all files; empty = 0)
+
+### Input Notes
+- Prefer pinning `detect-secrets-version` (e.g. `1.5.0`) for reproducibility.
+- Set `always-upload: 'true'` if you want a SARIF run recorded even with zero findings (useful for audit trail).
+- `wait-for-processing: 'false'` speeds up workflows if you don't need immediate ingestion confirmation.
 
 ## What Gets Detected
 
