@@ -155,6 +155,13 @@ When secrets are detected and SARIF upload is enabled:
 3. Review the detected secrets with file locations and context
 4. Each finding includes remediation guidance
 
+### Where do results appear?
+
+This action uploads SARIF to GitHub Code Scanning (Security → Code scanning alerts). 
+GitHub Secret Scanning is separate and does not ingest SARIF. 
+If you want similar alerts under Secret Scanning, create custom patterns in 
+Settings → Security & analysis → Secret scanning → Custom patterns.
+
 ## Contributing
 
 1. Fork the repository

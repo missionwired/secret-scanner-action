@@ -120,7 +120,7 @@ runs:
 
         if [[ "${SECRET_COUNT}" -gt 0 ]]; then
           if [[ "${{ inputs.upload-sarif }}" == "true" ]]; then
-            DETAILS_MESSAGE="Check the Security tab → Secret Scanning for detailed findings."
+            DETAILS_MESSAGE="Check the Security tab → Code scanning alerts for detailed findings."
           else
             DETAILS_MESSAGE="Review the detect-secrets-results.sarif file for detailed findings."
           fi
