@@ -108,11 +108,12 @@ runs:
           detect-secrets-output.json > detect-secrets-results.sarif
 
         # Primary count from raw detect-secrets JSON (handles zero findings robustly)
-        SECRET_COUNT=$(jq -r '(.results? // {}) | to_entries[]? | (.value | length) | [.] | add // 0' detect-secrets-output.json 2>/dev/null || echo 0)
+        # Correctly sum lengths of all result arrays (previous logic only captured last entry)
+        SECRET_COUNT=$(jq -r '(.results? // {}) | [ .[] | length ] | add // 0' detect-secrets-output.json 2>/dev/null || echo 0)
         if [[ -z "${SECRET_COUNT}" || "${SECRET_COUNT}" == "null" || ! "${SECRET_COUNT}" =~ ^[0-9]+$ ]]; then
           SECRET_COUNT=0
         fi
-        echo "secret_count=${SECRET_COUNT}" >> "$GITHUB_OUTPUT"
+        echo "secret_count=${SECRET_COUNT}" >> "${GITHUB_OUTPUT}"
 
         if [[ "${DEBUG_MODE}" == "true" ]]; then
           SARIF_COUNT=$(jq -r '[ .runs[]? | ( .results? // [] ) | length ] | add // 0' detect-secrets-results.sarif 2>/dev/null || echo 0)
@@ -122,7 +123,7 @@ runs:
           if [[ "${SARIF_COUNT}" != "${SECRET_COUNT}" ]]; then
             echo "::warning::Mismatch between raw and SARIF counts (raw=${SECRET_COUNT}, sarif=${SARIF_COUNT})"
           fi
-          head -n 25 detect-secrets-results.sarif || true
+            head -n 25 detect-secrets-results.sarif || true
           echo "::endgroup::"
         fi
 
@@ -134,7 +135,7 @@ runs:
           fi
           ERROR_MESSAGE="Found ${SECRET_COUNT} potential hardcoded secret(s). ${DETAILS_MESSAGE}"
           if [[ "${{ inputs.fail-on-detection }}" == "true" ]]; then
-            echo "fail_after_upload=true" >> "$GITHUB_OUTPUT"
+            echo "fail_after_upload=true" >> "${GITHUB_OUTPUT}"
             echo "::error title=Secrets Detected::${ERROR_MESSAGE}"
           else
             echo "::warning title=Secrets Detected::${ERROR_MESSAGE}"
