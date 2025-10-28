@@ -18,7 +18,11 @@ cat > empty.json <<'EOF'
   "results": {}
 }
 EOF
-"${jq_bin}" -f "${TRANSFORM}" empty.json > empty.sarif || { echo "jq transform failed on empty"; pass=false; }
+"${jq_bin}" \
+  --arg repoUri "https://example.com/org/repo" \
+  --arg revision "deadbeef" \
+  --arg branch "main" \
+  -f "${TRANSFORM}" empty.json > empty.sarif || { echo "jq transform failed on empty"; pass=false; }
 RAW_COUNT=$(jq -r '[ (.results? // {}) | to_entries[]? | (.value | length) ] | add // 0' empty.json)
 SARIF_COUNT=$(jq -r '[ .runs[]? | ( .results? // [] ) | length ] | add // 0' empty.sarif)
 printf 'Raw Count: %s\nSARIF Count: %s\n' "$RAW_COUNT" "$SARIF_COUNT"
@@ -41,7 +45,11 @@ cat > single.json <<'EOF'
   }
 }
 EOF
-"${jq_bin}" -f "${TRANSFORM}" single.json > single.sarif || { echo "jq transform failed on single"; pass=false; }
+"${jq_bin}" \
+  --arg repoUri "https://example.com/org/repo" \
+  --arg revision "cafebabe" \
+  --arg branch "feature/test" \
+  -f "${TRANSFORM}" single.json > single.sarif || { echo "jq transform failed on single"; pass=false; }
 RAW_COUNT=$(jq -r '[ (.results? // {}) | to_entries[]? | (.value | length) ] | add // 0' single.json)
 SARIF_COUNT=$(jq -r '[ .runs[]? | ( .results? // [] ) | length ] | add // 0' single.sarif)
 printf 'Raw Count: %s\nSARIF Count: %s\n' "$RAW_COUNT" "$SARIF_COUNT"
@@ -65,7 +73,11 @@ cat > multi.json <<'EOF'
   }
 }
 EOF
-"${jq_bin}" -f "${TRANSFORM}" multi.json > multi.sarif || { echo "jq transform failed on multi"; pass=false; }
+"${jq_bin}" \
+  --arg repoUri "https://example.com/org/repo" \
+  --arg revision "f00dbabe" \
+  --arg branch "multi/test" \
+  -f "${TRANSFORM}" multi.json > multi.sarif || { echo "jq transform failed on multi"; pass=false; }
 RAW_COUNT=$(jq -r '[ (.results? // {}) | to_entries[]? | (.value | length) ] | add // 0' multi.json)
 SARIF_COUNT=$(jq -r '[ .runs[]? | ( .results? // [] ) | length ] | add // 0' multi.sarif)
 printf 'Raw Count: %s\nSARIF Count: %s\n' "$RAW_COUNT" "$SARIF_COUNT"

@@ -320,14 +320,14 @@ def get_snippet(text; line):
       },
       "versionControlProvenance": [
         {
-          "repositoryUri": "REPOSITORY_URI_PLACEHOLDER",
-          "revisionId": "REVISION_ID_PLACEHOLDER",
-          "branch": "BRANCH_PLACEHOLDER",
+          "repositoryUri": $repoUri,
+          "revisionId": $revision,
+          "branch": $branch,
           "mappedTo": { "uriBaseId": "SRCROOT" }
         }
       ],
       "originalUriBaseIds": {
-        "SRCROOT": { "uri": "REPOSITORY_URI_PLACEHOLDER" }
+        "SRCROOT": { "uri": $repoUri }
       },
       "results": [
         (.results? // {} | keys_unsorted[]? ) as $file
