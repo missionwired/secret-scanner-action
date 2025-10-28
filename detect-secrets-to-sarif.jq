@@ -302,84 +302,67 @@ def get_snippet(text; line):
 {
   "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
   "version": "2.1.0",
-  "runs": [{
-    "tool": {
-      "driver": {
-        "name": "detect-secrets",
-        "version": tool_version,
-        "informationUri": tool_info_uri,
-        "rules": (
-          .results | keys_unsorted[] as $file |
-          [.[$file][] | .type] | unique |
-          map(if default_rules[.] then default_rules[.] else default_rules["Default"] end)
-        )
-      }
-    },
-    # versionControlProvenance can't be added from detect-secrets data alone
-    # This would need to be added separately from git metadata if running in a git repository
-    "versionControlProvenance": [
-      {
-        "repositoryUri": "REPOSITORY_URI_PLACEHOLDER",
-        "revisionId": "REVISION_ID_PLACEHOLDER",
-        "branch": "BRANCH_PLACEHOLDER",
-        "mappedTo": {
-          "uriBaseId": "SRCROOT"
-        }
-      }
-    ],
-    "results": [
-      .results | keys_unsorted[] as $file |
-      .[$file][] | {
-        "ruleId": (if default_rules[.type] then default_rules[.type].id else default_rules["Default"].id end),
-        # GitHub Advanced Security requires message.text (GH1015, GH1017, GH2012)
-        "message": {
-          "text": "\(.type) detected in \($file) at line \(.line_number)"
-        },
-        "locations": [{
-          "physicalLocation": {
-            "artifactLocation": {
-              "uri": $file,
-              "uriBaseId": "SRCROOT"
-            },
-            "region": {
-              "startLine": .line_number,
-              "snippet": {
-                "text": get_snippet($file; .line_number)
-              }
-            },
-            "contextRegion": {
-              "startLine": (.line_number - 3 | if . < 1 then 1 else . end),
-              "endLine": (.line_number + 3),
-              "snippet": {
-                "text": get_snippet($file; .line_number - 3 | if . < 1 then 1 else . end)
-              }
-            }
-          }
-        }],
-        "partialFingerprints": {
-          "secretHash": .hashed_secret,
-          "secretHash/v1": .hashed_secret,
-          "fileHash/v1": create_hash($file),
-          "typeHash/v1": create_hash(.type)
-        },
-        "properties": {
-          "is_verified": .is_verified
-        }
-      }
-    ],
-    # Add a conversion section to capture the metadata about how this was generated
-    "conversion": {
+  "runs": [
+    {
       "tool": {
         "driver": {
-          "name": "detect-secrets-to-sarif",
-          "informationUri": "https://iomergent.com"
+          "name": "detect-secrets",
+          "version": tool_version,
+          "informationUri": tool_info_uri,
+          "rules": (
+            [ (.results? // {} | keys_unsorted[]? ) as $file
+              | (.results[$file][]? | .type)? ]
+            | map(select(. != null))
+            | unique
+            | map( (default_rules[.] // default_rules["Default"]) )
+          )
         }
-      }
-    },
-    # Add run level properties to capture additional metadata
-    "properties": {
-      "detectSecretsVersion": tool_version,
-      "conversionDate": (now | todate)
+      },
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "REPOSITORY_URI_PLACEHOLDER",
+          "revisionId": "REVISION_ID_PLACEHOLDER",
+          "branch": "BRANCH_PLACEHOLDER",
+          "mappedTo": { "uriBaseId": "SRCROOT" }
+        }
+      ],
+      "originalUriBaseIds": {
+        "SRCROOT": { "uri": "REPOSITORY_URI_PLACEHOLDER" }
+      },
+      "results": [
+        (.results? // {} | keys_unsorted[]? ) as $file
+        | (.results[$file][]?) as $finding
+        | {
+            "ruleId": ( if $finding.type and default_rules[$finding.type] then default_rules[$finding.type].id else default_rules["Default"].id end ),
+            "message": { "text": "\(($finding.type // "Secret")) detected in \($file) at line \(($finding.line_number // 0))" },
+            "locations": [
+              { "physicalLocation": {
+                  "artifactLocation": { "uri": $file, "uriBaseId": "SRCROOT" },
+                  "region": {
+                    "startLine": ($finding.line_number // 0),
+                    "snippet": { "text": get_snippet($file; ($finding.line_number // 0)) }
+                  },
+                  "contextRegion": {
+                    "startLine": (($finding.line_number // 0) - 3 | if . < 1 then 1 else . end),
+                    "endLine": (($finding.line_number // 0) + 3),
+                    "snippet": { "text": get_snippet($file; (($finding.line_number // 0) - 3 | if . < 1 then 1 else . end)) }
+                  }
+                }
+              }
+            ],
+            "partialFingerprints": {
+              "secretHash": ($finding.hashed_secret // "UNKNOWN"),
+              "secretHash/v1": ($finding.hashed_secret // "UNKNOWN"),
+              "fileHash/v1": create_hash($file),
+              "typeHash/v1": create_hash($finding.type // "UnknownType")
+            },
+            "properties": { "is_verified": ($finding.is_verified // false) }
+          }
+      ],
+      "conversion": {
+        "tool": { "driver": { "name": "detect-secrets-to-sarif", "informationUri": "https://iomergent.com" } }
+      },
+      "properties": { "detectSecretsVersion": tool_version, "conversionDate": (now | todate) }
     }
-  }]
+  ]
 }

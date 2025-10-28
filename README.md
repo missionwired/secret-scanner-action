@@ -88,6 +88,7 @@ For SARIF upload to work, your workflow needs:
 permissions:
   security-events: write  # Upload SARIF results
   contents: read         # Checkout code
+  actions: read
 ```
 
 ## Example Workflows

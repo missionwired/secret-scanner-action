@@ -107,13 +107,22 @@ runs:
           -f "${{ github.action_path }}/detect-secrets-to-sarif.jq" \
           detect-secrets-output.json > detect-secrets-results.sarif
 
-        SECRET_COUNT=$(jq '[.runs[].results | length] | add' detect-secrets-results.sarif 2>/dev/null || echo 0)
+        # Primary count from raw detect-secrets JSON (handles zero findings robustly)
+        SECRET_COUNT=$(jq -r '(.results? // {}) | to_entries[]? | (.value | length) | [.] | add // 0' detect-secrets-output.json 2>/dev/null || echo 0)
+        if [[ -z "${SECRET_COUNT}" || "${SECRET_COUNT}" == "null" || ! "${SECRET_COUNT}" =~ ^[0-9]+$ ]]; then
+          SECRET_COUNT=0
+        fi
         echo "secret_count=${SECRET_COUNT}" >> "$GITHUB_OUTPUT"
 
         if [[ "${DEBUG_MODE}" == "true" ]]; then
+          SARIF_COUNT=$(jq -r '[ .runs[]? | ( .results? // [] ) | length ] | add // 0' detect-secrets-results.sarif 2>/dev/null || echo 0)
           echo "::group::SARIF Diagnostics"
-          echo "Secret Count: ${SECRET_COUNT}"
-          head -n 15 detect-secrets-results.sarif || true
+          echo "Raw Secret Count: ${SECRET_COUNT}"
+          echo "SARIF Secret Count: ${SARIF_COUNT}"
+          if [[ "${SARIF_COUNT}" != "${SECRET_COUNT}" ]]; then
+            echo "::warning::Mismatch between raw and SARIF counts (raw=${SECRET_COUNT}, sarif=${SARIF_COUNT})"
+          fi
+          head -n 25 detect-secrets-results.sarif || true
           echo "::endgroup::"
         fi
 
