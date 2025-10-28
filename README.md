@@ -1,6 +1,6 @@
 # Detect Secrets Scanner Action
 
-A GitHub Action that scans your codebase for hardcoded secrets using [detect-secrets](https://github.com/Yelp/detect-secrets), converts results to SARIF format, and optionally uploads findings to GitHub Code Scanning for security visibility.
+A GitHub Action that scans your codebase for hardcoded secrets using [detect-secrets](https://github.com/Yelp/detect-secrets), converts results to SARIF, and optionally uploads findings to GitHub Code Scanning for visibility and triage.
 
 ## Features
 
@@ -51,15 +51,15 @@ jobs:
 
 | Input | Description | Default | Required |
 |-------|-------------|---------|----------|
-| `scan-path` | Directory to scan for secrets | `./build` | No |
+| `scan-path` | Directory to scan for secrets | `.` | No |
 | `upload-sarif` | Upload results to GitHub Code Scanning | `true` | No |
 | `exclude-files-regex` | Regex pattern for files to exclude | `""` | No |
 | `fail-on-detection` | Fail workflow if secrets are found | `true` | No |
 
 ## Outputs
 
-The action sets the following output:
-- `secret_count`: Number of secrets detected
+Outputs:
+- `secret_count`: Total number of findings (robustly summed across all files; empty = 0)
 
 ## What Gets Detected
 
@@ -72,13 +72,11 @@ This action detects hardcoded secrets including:
 - **Authentication**: JWT tokens, Basic Auth credentials, Private keys
 - **And many more...**
 
-## Disabled Plugins
+## Disabled Plugins (Noise Reduction)
 
-To reduce false positives, these plugins are disabled by default:
-- `ArtifactoryDetector`
-- `Base64HighEntropyString`
-- `HexHighEntropyString` 
-- `KeywordDetector`
+To reduce false positives we disable very noisy detectors:
+`ArtifactoryDetector`, `Base64HighEntropyString`, `HexHighEntropyString`, `KeywordDetector`.
+You can re‑enable any by removing its `--disable-plugin` line in the composite action.
 
 ## Permissions Required
 
@@ -158,19 +156,46 @@ When secrets are detected and SARIF upload is enabled:
 
 ### Where do results appear?
 
-This action uploads SARIF to GitHub Code Scanning (Security → Code scanning alerts). 
-GitHub Secret Scanning is separate and does not ingest SARIF. 
-If you want similar alerts under Secret Scanning, create custom patterns in 
-Settings → Security & analysis → Secret scanning → Custom patterns.
+Uploaded SARIF findings show under Security → Code scanning alerts (category: `detect-secrets`).
+GitHub Secret Scanning is a separate feature and does not ingest SARIF. For custom secret scanning alerts there, define patterns under Settings → Security & analysis → Secret scanning → Custom patterns.
+
+### Testing Locally
+
+Run the bundled script to validate the transform with zero / single / multi secrets:
+```bash
+bash test-transform.sh
+```
+
+### Adding Dummy Secrets (for testing only)
+Add clearly fake tokens/keys in a throwaway branch (never real credentials):
+```js
+// examples
+const AWS_ACCESS_KEY_ID = "AKIAFAKEFAKEFAKE123";
+const GITHUB_TOKEN = "ghp_FAKE1234567890EXAMPLETOKEN";
+const PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nFAKEFAKEFAKEFAKE\n-----END PRIVATE KEY-----";
+```
+Commit, run the action, then remove them.
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test with different configurations
-5. Submit a pull request
+1. Fork
+2. Branch
+3. Update code / tests (`test-transform.sh`)
+4. Run local validation
+5. Open PR
 
-## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+
+## Versioning & Releases
+
+We use semantic versioning. Minor bumps add functionality without breaking inputs.
+
+To cut a new release (example v1.1.0):
+```bash
+git tag -a v1.1.0 -m "v1.1.0"
+git push origin v1.1.0
+# Update the major alias
+git tag -f v1 v1.1.0
+git push origin -f v1
+```
+Consumers referencing `@v1` automatically receive the latest compatible minor/patch.
