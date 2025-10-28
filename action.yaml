@@ -1,48 +1,51 @@
-name: "Detect Secrets Scanner"
-description: "Scan files for hardcoded secrets, convert results to SARIF, and optionally upload to GitHub Code Scanning."
+name: Detect Secrets Scanner
+description: Scan files for hardcoded secrets, convert results to SARIF, and
+  optionally upload to GitHub Code Scanning.
 inputs:
   scan-path:
-    description: "The directory to scan for secrets (e.g., ./src/dist). Defaults to ./build"
+    description: The directory to scan for secrets (e.g., ./src/dist). Defaults to ./build
     required: false
-    default: "."
+    default: .
 
   upload-sarif:
-    description: "Whether to upload SARIF results to GitHub Code Scanning (true/false)."
+    description: Whether to upload SARIF results to GitHub Code Scanning (true/false).
     required: false
-    default: "true"
+    default: 'true'
 
-  exclude-files-regex: 
-    description: "A single regex pattern for files to exclude from scanning (e.g., .*/test/.*|.*\\.min\\.js)."
+  exclude-files-regex:
+    description: A single regex pattern for files to exclude from scanning (e.g.,
+      .*/test/.*|.*\.min\.js).
     required: false
-    default: ""
+    default: ''
 
   fail-on-detection:
-    description: "Whether to fail the workflow if secrets are detected (true) or just warn (false)."
+    description: Whether to fail the workflow if secrets are detected (true) or just
+      warn (false).
     required: false
-    default: "true"
+    default: 'true'
 
   debug-mode:
-    description: "Enable verbose diagnostic logging and artifact upload (true/false)."
+    description: Enable verbose diagnostic logging and artifact upload (true/false).
     required: false
-    default: "false"
+    default: 'false'
 
   always-upload:
-    description: "Upload SARIF even if zero findings (true/false)."
+    description: Upload SARIF even if zero findings (true/false).
     required: false
-    default: "false"
+    default: 'false'
 
   wait-for-processing:
-    description: "Wait for SARIF ingestion before completing (true/false)."
+    description: Wait for SARIF ingestion before completing (true/false).
     required: false
-    default: "true"
+    default: 'true'
 
   checkout-path:
-    description: "Path repository was checked out to (for path relativization)."
+    description: Path repository was checked out to (for path relativization).
     required: false
-    default: "${{ github.workspace }}"
+    default: ${{ github.workspace }}
 
 runs:
-  using: "composite"
+  using: composite
   steps:
     - name: Debug Context
       if: ${{ inputs.debug-mode == 'true' }}
@@ -73,7 +76,7 @@ runs:
       shell: bash
       env:
         # Pass the regex pattern to the shell environment to avoid quoting issues with run: |
-        EXCLUDE_REGEX: ${{ inputs.exclude-files-regex }} 
+        EXCLUDE_REGEX: ${{ inputs.exclude-files-regex }}
         DEBUG_MODE: ${{ inputs.debug-mode }}
       run: |
         # Base command
@@ -134,8 +137,9 @@ runs:
 
     - name: Upload SARIF to GitHub Code Scanning
       # Only runs if 'upload-sarif' is true (for MW) and secrets were found
-      if: ${{ inputs.upload-sarif == 'true' && (inputs.always-upload == 'true' || steps.secret-scan.outputs.secret_count > 0) }}
-      uses: github/codeql-action/upload-sarif@v3
+      if: ${{ inputs.upload-sarif == 'true' && (inputs.always-upload == 'true' ||
+        steps.secret-scan.outputs.secret_count > 0) }}
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: detect-secrets-results.sarif
         category: detect-secrets
