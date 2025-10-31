@@ -14,7 +14,7 @@ inputs:
     required: false
     default: ''
   scan-all-files:
-    description: Scan all files including untracked/build artifacts (true/false). Default only scans git-tracked files.
+    description: Scan all files including untracked/build artifacts (true/false). Default scans all files.
     required: false
     default: 'true'
   fail-on-detection:
