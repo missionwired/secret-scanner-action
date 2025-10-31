@@ -60,6 +60,12 @@ runs:
         echo "Wait For Processing: ${{ inputs.wait-for-processing }}"
         echo "::endgroup::"
 
+        echo "::group::Dependency Check"
+        echo "✓ python3: $(python3 --version 2>&1 || echo 'NOT FOUND')"
+        echo "✓ pip: $(pip --version 2>&1 || pip3 --version 2>&1 || echo 'NOT FOUND')"
+        echo "✓ jq: $(jq --version 2>&1 || echo 'NOT FOUND')"
+        echo "::endgroup::"
+
     - name: Install detect-secrets
       shell: bash
       run: |
@@ -80,14 +86,21 @@ runs:
       env:
         EXCLUDE_REGEX: ${{ inputs.exclude-files-regex }}
         DEBUG_MODE: ${{ inputs.debug-mode }}
+        SCAN_PATH: ${{ inputs.scan-path }}
       run: |
         echo "[secret-scan] Scan phase"
         set -euo pipefail
 
+        # Basic input validation - check path exists
+        if [[ ! -e "${SCAN_PATH}" ]]; then
+          echo "::error::Scan path '${SCAN_PATH}' does not exist"
+          exit 1
+        fi
+
         SCAN_CMD=(
           detect-secrets
           scan
-          "${{ inputs.scan-path }}"
+          "${SCAN_PATH}"
         )
 
         # Add --all-files flag if explicitly requested (for build artifacts)
