@@ -47,6 +47,21 @@ jobs:
     fail-on-detection: 'false'
 ```
 
+### Scanning Build Artifacts Example
+
+```yaml
+- uses: missionwired/secret-scanning-action@v1
+  with:
+    # Scan build directory including untracked files
+    scan-path: './dist'
+    scan-all-files: 'true'
+    
+    # Exclude build tool artifacts
+    exclude-files-regex: '\.aws-sam/|node_modules/'
+    
+    # Note: .git/ is automatically excluded when scan-all-files: true
+```
+
 ## Inputs
 
 | Input | Description | Default | Required |
@@ -54,6 +69,7 @@ jobs:
 | `scan-path` | Directory to scan (defaults repo root) | `.` | No |
 | `upload-sarif` | Upload SARIF to Code Scanning | `true` | No |
 | `exclude-files-regex` | Single regex for excluding files | `""` | No |
+| `scan-all-files` | Scan all files including build artifacts | `false` | No |
 | `fail-on-detection` | Fail job when findings > 0 | `true` | No |
 | `debug-mode` | Emit extra diagnostic output | `false` | No |
 | `always-upload` | Upload SARIF even if 0 findings | `false` | No |
@@ -68,6 +84,30 @@ Outputs:
 
 ### Input Notes
 - Prefer pinning `detect-secrets-version` (e.g. `1.5.0`) for reproducibility.
+- When `scan-all-files: true`, the action automatically excludes `.git/` to prevent scanning git history
+
+## Scanning Modes
+
+### Default Mode (Git-tracked files only)
+```yaml
+- uses: missionwired/secret-scanning-action@v1
+  # scan-all-files defaults to 'false'
+```
+- **Scans**: Only files tracked by git in the current working tree
+- **Use case**: Code review, CI/CD on source code changes
+- **Performance**: Fast, focused scanning
+- **Security**: Prevents false positives from git history
+
+### Build Artifacts Mode (All files)
+```yaml
+- uses: missionwired/secret-scanning-action@v1
+  with:
+    scan-all-files: 'true'
+```
+- **Scans**: All files including untracked files, build outputs, dependencies
+- **Auto-excludes**: `.git/` directory to avoid scanning git history
+- **Use case**: Scanning build artifacts, dist folders, node_modules
+- **Security**: Catches secrets in generated files while avoiding historical false positives
 - Set `always-upload: 'true'` if you want a SARIF run recorded even with zero findings (useful for audit trail).
 - `wait-for-processing: 'false'` speeds up workflows if you don't need immediate ingestion confirmation.
 
@@ -168,6 +208,23 @@ When secrets are detected and SARIF upload is enabled:
 
 Uploaded SARIF findings show under Security → Code scanning alerts (category: `detect-secrets`).
 GitHub Secret Scanning is a separate feature and does not ingest SARIF. For custom secret scanning alerts there, define patterns under Settings → Security & analysis → Secret scanning → Custom patterns.
+
+## Troubleshooting
+
+### "Secrets detected from other branches/commits"
+If you're seeing secrets that were removed from your current branch:
+- **Problem**: Action was scanning git history in `.git/` directory
+- **Solution**: Use `scan-all-files: 'true'` which automatically excludes `.git/` - this is on by default
+- **Alternative**: Add `\.git/` to your `exclude-files-regex` pattern
+
+### Build artifacts containing secrets
+For scanning build outputs (dist/, node_modules/, .aws-sam/build/):
+```yaml
+- uses: missionwired/secret-scanning-action@v1
+  with:
+    scan-all-files: 'true'  # Scan all files including build artifacts
+    exclude-files-regex: '\.aws-sam/|node_modules/'  # Exclude specific build dirs
+```
 
 ### Testing Locally
 
