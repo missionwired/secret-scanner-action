@@ -110,7 +110,6 @@ runs:
           # Always exclude .git directory when scanning all files to avoid git history
           EXCLUDE_PATTERN="\.git/"
         fi
-        
         if [[ -n "${EXCLUDE_REGEX}" ]]; then
           if [[ -n "${EXCLUDE_PATTERN}" ]]; then
             # Combine git exclusion with user exclusion
