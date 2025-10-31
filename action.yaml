@@ -13,6 +13,10 @@ inputs:
     description: Regex pattern for files to exclude (single pattern).
     required: false
     default: ''
+  scan-all-files:
+    description: Scan all files including untracked/build artifacts (true/false). Default only scans git-tracked files.
+    required: false
+    default: 'true'
   fail-on-detection:
     description: Fail workflow if secrets detected (true/false).
     required: false
@@ -83,9 +87,16 @@ runs:
         SCAN_CMD=(
           detect-secrets
           scan
-          --all-files
           "${{ inputs.scan-path }}"
         )
+
+        # Add --all-files flag if explicitly requested (for build artifacts)
+        if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
+          SCAN_CMD+=(--all-files)
+          echo "::debug::Scanning all files including untracked/build artifacts"
+        else
+          echo "::debug::Scanning git-tracked files only"
+        fi
 
         # Disable noisy plugins
         SCAN_CMD+=(--disable-plugin ArtifactoryDetector)
@@ -93,9 +104,25 @@ runs:
         SCAN_CMD+=(--disable-plugin HexHighEntropyString)
         SCAN_CMD+=(--disable-plugin KeywordDetector)
 
+        # Build exclude pattern - always exclude .git when scanning all files
+        EXCLUDE_PATTERN=""
+        if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
+          # Always exclude .git directory when scanning all files to avoid git history
+          EXCLUDE_PATTERN="\.git/"
+        fi
+        
         if [[ -n "${EXCLUDE_REGEX}" ]]; then
-          SCAN_CMD+=(--exclude-files "${EXCLUDE_REGEX}")
-          echo "::debug::Excluding files matching: ${EXCLUDE_REGEX}"
+          if [[ -n "${EXCLUDE_PATTERN}" ]]; then
+            # Combine git exclusion with user exclusion
+            EXCLUDE_PATTERN="${EXCLUDE_PATTERN}|${EXCLUDE_REGEX}"
+          else
+            EXCLUDE_PATTERN="${EXCLUDE_REGEX}"
+          fi
+        fi
+
+        if [[ -n "${EXCLUDE_PATTERN}" ]]; then
+          SCAN_CMD+=(--exclude-files "${EXCLUDE_PATTERN}")
+          echo "::debug::Excluding files matching: ${EXCLUDE_PATTERN}"
         fi
 
         echo "::group::Scanning for secrets"
