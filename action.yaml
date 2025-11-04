@@ -34,13 +34,21 @@ inputs:
     required: false
     default: 'true'
   checkout-path:
-    description: Path repository was checked out to (for path relativization).
+    description: Path repository was checked out to (for path relativization in SARIF).
     required: false
     default: ${{ github.workspace }}
   detect-secrets-version:
     description: Pin detect-secrets version (e.g., 1.5.0). Blank = latest.
     required: false
     default: ''
+  use-baseline:
+    description: Use baseline file to track known secrets (recommended for production).
+    required: false
+    default: 'false'
+  baseline-file:
+    description: Path to detect-secrets baseline file (relative to repository root).
+    required: false
+    default: '.secrets.baseline'
 
 runs:
   using: composite
@@ -58,6 +66,8 @@ runs:
         echo "Exclude Regex: ${{ inputs.exclude-files-regex }}"
         echo "Always Upload: ${{ inputs.always-upload }}"
         echo "Wait For Processing: ${{ inputs.wait-for-processing }}"
+        echo "Use Baseline: ${{ inputs.use-baseline }}"
+        echo "Baseline File: ${{ inputs.baseline-file }}"
         echo "::endgroup::"
 
         echo "::group::Dependency Check"
@@ -76,7 +86,7 @@ runs:
         if [[ -n "${{ inputs.detect-secrets-version }}" ]]; then
           pip install "detect-secrets==${{ inputs.detect-secrets-version }}" --quiet
         else
-          pip install detect-secrets --quiet
+          pip install detect-secrets --quiet 
         fi
         echo "::endgroup::"
 
@@ -87,6 +97,8 @@ runs:
         EXCLUDE_REGEX: ${{ inputs.exclude-files-regex }}
         DEBUG_MODE: ${{ inputs.debug-mode }}
         SCAN_PATH: ${{ inputs.scan-path }}
+        USE_BASELINE: ${{ inputs.use-baseline }}
+        BASELINE_FILE: ${{ inputs.baseline-file }}
       run: |
         echo "[secret-scan] Scan phase"
         set -euo pipefail
@@ -103,6 +115,33 @@ runs:
           "${SCAN_PATH}"
         )
 
+        # Handle baseline file
+        BASELINE_EXISTS=false
+        if [[ "${USE_BASELINE}" == "true" ]]; then
+          if [[ -f "${BASELINE_FILE}" ]]; then
+            BASELINE_EXISTS=true
+            echo "::notice::Using existing baseline file: ${BASELINE_FILE}"
+            # Copy baseline to json file 
+            cp "${BASELINE_FILE}" detect-secrets-baseline.json
+          else
+            echo "::error::Baseline mode enabled but baseline file '${BASELINE_FILE}' not found."
+            echo "::error::Create baseline file first: 'detect-secrets scan --all-files > ${BASELINE_FILE}'"
+            echo "::error::Then audit it: 'detect-secrets audit ${BASELINE_FILE}'"
+            echo "::error::Finally commit the baseline file to your repository."
+            exit 1
+          fi
+        else
+          echo "::warning::Baseline mode disabled. Git history will be scanned and may produce repeated alerts."
+          echo "::warning::For production use, enable 'use-baseline: true' to track known secrets."
+        fi
+
+
+        # Add baseline parameter if using baseline mode and baseline exists
+        if [[ "${USE_BASELINE}" == "true" && "${BASELINE_EXISTS}" == "true" ]]; then
+          SCAN_CMD+=(--baseline detect-secrets-baseline.json)
+          echo "::debug::Using baseline mode"
+        fi
+
         # Add --all-files flag if explicitly requested (for build artifacts)
         if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
           SCAN_CMD+=(--all-files)
@@ -117,24 +156,9 @@ runs:
         SCAN_CMD+=(--disable-plugin HexHighEntropyString)
         SCAN_CMD+=(--disable-plugin KeywordDetector)
 
-        # Build exclude pattern - always exclude .git when scanning all files
-        EXCLUDE_PATTERN=""
-        if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
-          # Always exclude .git directory when scanning all files to avoid git history
-          EXCLUDE_PATTERN="\.git/"
-        fi
         if [[ -n "${EXCLUDE_REGEX}" ]]; then
-          if [[ -n "${EXCLUDE_PATTERN}" ]]; then
-            # Combine git exclusion with user exclusion
-            EXCLUDE_PATTERN="${EXCLUDE_PATTERN}|${EXCLUDE_REGEX}"
-          else
-            EXCLUDE_PATTERN="${EXCLUDE_REGEX}"
-          fi
-        fi
-
-        if [[ -n "${EXCLUDE_PATTERN}" ]]; then
-          SCAN_CMD+=(--exclude-files "${EXCLUDE_PATTERN}")
-          echo "::debug::Excluding files matching: ${EXCLUDE_PATTERN}"
+          SCAN_CMD+=(--exclude-files "${EXCLUDE_REGEX}")
+          echo "::debug::Excluding files matching: ${EXCLUDE_REGEX}"
         fi
 
         echo "::group::Scanning for secrets"
@@ -151,10 +175,13 @@ runs:
           -f "${{ github.action_path }}/detect-secrets-to-sarif.jq" \
           detect-secrets-output.json > detect-secrets-results.sarif
 
-        # Primary count from raw detect-secrets JSON (handles zero findings robustly)
-        # Correctly sum lengths of all result arrays (previous logic only captured last entry)
+        # Primary count from raw detect-secrets JSON output before SARIF conversion
+        # TODO: Need to add some tests for 0,1,2,3 secrets found
+        # This jq expression gets the length of each array in the results object and sums them
+        # If an error occurs - it defaults to 0
         SECRET_COUNT=$(jq -r '(.results? // {}) | [ .[] | length ] | add // 0' detect-secrets-output.json 2>/dev/null || echo 0)
         if [[ -z "${SECRET_COUNT}" || "${SECRET_COUNT}" == "null" || ! "${SECRET_COUNT}" =~ ^[0-9]+$ ]]; then
+        echo "::warning::Secret count validation failed. Result was '${SECRET_COUNT}'. Defaulting count to 0 to avoid workflow disruption."
           SECRET_COUNT=0
         fi
         echo "secret_count=${SECRET_COUNT}" >> "${GITHUB_OUTPUT}"
