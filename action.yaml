@@ -135,8 +135,8 @@ runs:
           # Use hook mode - alerts only on NEW secrets not in baseline
           SCAN_CMD=(
             detect-secrets-hook
-            -- json
-            -- baseline "${BASELINE_FILE}"
+            --json
+            --baseline "${BASELINE_FILE}"
           )
           echo "::debug::Using detect-secrets hook mode (alerts on new secrets only)"
         else
@@ -172,7 +172,32 @@ runs:
         if [[ "${DEBUG_MODE}" == "true" ]]; then
           echo "[secret-scan] Command: ${SCAN_CMD[*]}"
         fi
-        "${SCAN_CMD[@]}" > detect-secrets-output.json
+
+        # Execute scan command based on mode
+        if [[ "${USE_HOOK_MODE}" == "true" ]]; then
+          # Hook mode requires file list as arguments
+          # Find all files excluding patterns
+          if [[ -n "${EXCLUDE_REGEX}" ]]; then
+            FILES_TO_SCAN=$(find "${SCAN_PATH}" -type f ! -path "*/${EXCLUDE_REGEX}*" ! -name "*.pyc" 2>/dev/null || true)
+          else
+            FILES_TO_SCAN=$(find "${SCAN_PATH}" -type f ! -name "*.pyc" 2>/dev/null || true)
+          fi
+
+          if [[ -z "${FILES_TO_SCAN}" ]]; then
+            echo "::warning::No files found to scan in ${SCAN_PATH}"
+            echo '{"version": "1.5.0", "results": {}}' > detect-secrets-output.json
+          else
+            if [[ "${DEBUG_MODE}" == "true" ]]; then
+              FILE_COUNT=$(echo "$FILES_TO_SCAN" | wc -l | tr -d ' ')
+              echo "Files to scan: ${FILE_COUNT}"
+            fi
+            # Run hook with file list
+            echo "${FILES_TO_SCAN}" | xargs "${SCAN_CMD[@]}" > detect-secrets-output.json 2>&1 || true
+          fi
+        else
+          # Scan mode works on directories
+          "${SCAN_CMD[@]}" > detect-secrets-output.json
+        fi
         echo "::endgroup::"
 
         jq \
