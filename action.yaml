@@ -134,8 +134,7 @@ runs:
         if [[ "${USE_HOOK_MODE}" == "true" ]]; then
           # Use hook mode - alerts only on NEW secrets not in baseline
           SCAN_CMD=(
-            detect-secrets
-            hook
+            detect-secrets-hook
             "${SCAN_PATH}"
           )
           echo "::debug::Using detect-secrets hook mode (alerts on new secrets only)"
