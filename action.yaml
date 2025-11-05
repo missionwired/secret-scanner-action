@@ -16,7 +16,7 @@ inputs:
   scan-all-files:
     description: Scan all files including untracked/build artifacts (true/false). Default scans all files.
     required: false
-    default: 'true'
+    default: 'false'
   fail-on-detection:
     description: Fail workflow if secrets detected (true/false).
     required: false
@@ -149,12 +149,12 @@ runs:
         fi
 
         # # Add --all-files flag if explicitly requested (for build artifacts)
-        # if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
-        #   SCAN_CMD+=(--all-files)
-        #   echo "::debug::Scanning all files including untracked/build artifacts"
-        # else
-        #   echo "::debug::Scanning git-tracked files only"
-        # fi
+        if [[ "${{ inputs.scan-all-files }}" == "true" && USE_HOOK_MODE == "false" ]]; then
+          SCAN_CMD+=(--all-files)
+          echo "::debug::Scanning all files including untracked/build artifacts"
+        else
+          echo "::debug::Scanning git-tracked files only"
+        fi
 
         # Disable noisy plugins
         SCAN_CMD+=(--disable-plugin ArtifactoryDetector)
