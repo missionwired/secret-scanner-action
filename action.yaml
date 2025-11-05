@@ -148,13 +148,13 @@ runs:
           echo "::debug::Using detect-secrets scan mode (shows all secrets - not using baseline file)"
         fi
 
-        # Add --all-files flag if explicitly requested (for build artifacts)
-        if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
-          SCAN_CMD+=(--all-files)
-          echo "::debug::Scanning all files including untracked/build artifacts"
-        else
-          echo "::debug::Scanning git-tracked files only"
-        fi
+        # # Add --all-files flag if explicitly requested (for build artifacts)
+        # if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
+        #   SCAN_CMD+=(--all-files)
+        #   echo "::debug::Scanning all files including untracked/build artifacts"
+        # else
+        #   echo "::debug::Scanning git-tracked files only"
+        # fi
 
         # Disable noisy plugins
         SCAN_CMD+=(--disable-plugin ArtifactoryDetector)
