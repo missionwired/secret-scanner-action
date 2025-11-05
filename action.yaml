@@ -79,7 +79,7 @@ runs:
     - name: Install detect-secrets
       shell: bash
       run: |
-        echo "[secret-scan] Install phase"
+        echo "[secret-scan] Install phase - youre on the right branch louuuuuuuuuu"
         set -euo pipefail
         echo "::group::Installing detect-secrets"
         python3 -m pip install --upgrade pip --quiet
