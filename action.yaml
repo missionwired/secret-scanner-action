@@ -118,6 +118,12 @@ runs:
             BASELINE_EXISTS=true
             USE_HOOK_MODE=true
             echo "::notice::Using existing baseline file: ${BASELINE_FILE}"
+            if [[ "${DEBUG_MODE}" == "true" ]]; then
+              echo "::debug::Baseline file absolute path: $(realpath "${BASELINE_FILE}")"
+              echo "::debug::Baseline file size: $(wc -c < "${BASELINE_FILE}") bytes"
+              echo "::debug::Current working directory: $(pwd)"
+              echo "::debug::Baseline file is readable: $(test -r "${BASELINE_FILE}" && echo 'YES' || echo 'NO')"
+            fi
           else
             echo "::error::Baseline mode enabled but baseline file '${BASELINE_FILE}' not found."
             echo "::error::Create baseline file first: 'detect-secrets scan --all-files > ${BASELINE_FILE}'"
@@ -133,12 +139,17 @@ runs:
         # Build scan command based on mode
         if [[ "${USE_HOOK_MODE}" == "true" ]]; then
           # Use hook mode - alerts only on NEW secrets not in baseline
+          # Convert baseline to absolute path for hook
+          BASELINE_ABS_PATH="$(cd "$(dirname "${BASELINE_FILE}")" && pwd)/$(basename "${BASELINE_FILE}")"
           SCAN_CMD=(
             detect-secrets-hook
             --json
-            --baseline "${BASELINE_FILE}"
+            --baseline "${BASELINE_ABS_PATH}"
           )
           echo "::debug::Using detect-secrets hook mode (alerts on new secrets only)"
+          if [[ "${DEBUG_MODE}" == "true" ]]; then
+            echo "::debug::Baseline absolute path for hook: ${BASELINE_ABS_PATH}"
+          fi
         else
           # Use scan mode - shows ALL secrets
           SCAN_CMD=(
