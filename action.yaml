@@ -109,20 +109,15 @@ runs:
           exit 1
         fi
 
-        SCAN_CMD=(
-          detect-secrets
-          scan
-          "${SCAN_PATH}"
-        )
-
-        # Handle baseline file
+        # Handle baseline file and determine scan command
         BASELINE_EXISTS=false
+        USE_HOOK_MODE=false
+
         if [[ "${USE_BASELINE}" == "true" ]]; then
           if [[ -f "${BASELINE_FILE}" ]]; then
             BASELINE_EXISTS=true
+            USE_HOOK_MODE=true
             echo "::notice::Using existing baseline file: ${BASELINE_FILE}"
-            # Copy baseline to json file 
-            cp "${BASELINE_FILE}" detect-secrets-baseline.json
           else
             echo "::error::Baseline mode enabled but baseline file '${BASELINE_FILE}' not found."
             echo "::error::Create baseline file first: 'detect-secrets scan --all-files > ${BASELINE_FILE}'"
@@ -135,11 +130,22 @@ runs:
           echo "::warning::For production use, enable 'use-baseline: true' to track known secrets."
         fi
 
-
-        # Add baseline parameter if using baseline mode and baseline exists
-        if [[ "${USE_BASELINE}" == "true" && "${BASELINE_EXISTS}" == "true" ]]; then
-          SCAN_CMD+=(--baseline detect-secrets-baseline.json)
-          echo "::debug::Using baseline mode"
+        # Build scan command based on mode
+        if [[ "${USE_HOOK_MODE}" == "true" ]]; then
+          # Use hook mode - alerts only on NEW secrets not in baseline
+          SCAN_CMD=(
+            detect-secrets-hook
+            "${SCAN_PATH}"
+          )
+          echo "::debug::Using detect-secrets hook mode (alerts on new secrets only)"
+        else
+          # Use scan mode - shows ALL secrets
+          SCAN_CMD=(
+            detect-secrets
+            scan
+            "${SCAN_PATH}"
+          )
+          echo "::debug::Using detect-secrets scan mode (shows all secrets - not using baseline file)"
         fi
 
         # Add --all-files flag if explicitly requested (for build artifacts)
@@ -237,5 +243,5 @@ runs:
       if: ${{ steps.secret-scan.outputs.fail_after_upload == 'true' }}
       shell: bash
       run: |
-        echo "Failing after SARIF upload due to detected secrets."
+        echo "Failing build due to detected secrets."
         exit 1
