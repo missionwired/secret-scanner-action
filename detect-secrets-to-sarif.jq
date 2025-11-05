@@ -329,36 +329,42 @@ def get_snippet(text; line):
       "originalUriBaseIds": {
         "SRCROOT": { "uri": $repoUri }
       },
-      "results": [
-        (.results? // {} | keys_unsorted[]? ) as $file
-        | (.results[$file][]?) as $finding
-        | {
-            "ruleId": ( if $finding.type and default_rules[$finding.type] then default_rules[$finding.type].id else default_rules["Default"].id end ),
-            "message": { "text": "\(($finding.type // "Secret")) detected in \($file) at line \(($finding.line_number // 0))" },
-            "locations": [
-              { "physicalLocation": {
-                  "artifactLocation": { "uri": $file, "uriBaseId": "SRCROOT" },
-                  "region": {
-                    "startLine": ($finding.line_number // 0),
-                    "snippet": { "text": get_snippet($file; ($finding.line_number // 0)) }
-                  },
-                  "contextRegion": {
-                    "startLine": (($finding.line_number // 0) - 3 | if . < 1 then 1 else . end),
-                    "endLine": (($finding.line_number // 0) + 3),
-                    "snippet": { "text": get_snippet($file; (($finding.line_number // 0) - 3 | if . < 1 then 1 else . end)) }
+      "results": (
+        if (.results? // {} | length) > 0 then
+          [
+            (.results? // {} | keys_unsorted[]? ) as $file
+            | (.results[$file][]?) as $finding
+            | {
+                "ruleId": ( if $finding.type and default_rules[$finding.type] then default_rules[$finding.type].id else default_rules["Default"].id end ),
+                "message": { "text": "\(($finding.type // "Secret")) detected in \($file) at line \(($finding.line_number // 0))" },
+                "locations": [
+                  { "physicalLocation": {
+                      "artifactLocation": { "uri": $file, "uriBaseId": "SRCROOT" },
+                      "region": {
+                        "startLine": ($finding.line_number // 0),
+                        "snippet": { "text": get_snippet($file; ($finding.line_number // 0)) }
+                      },
+                      "contextRegion": {
+                        "startLine": (($finding.line_number // 0) - 3 | if . < 1 then 1 else . end),
+                        "endLine": (($finding.line_number // 0) + 3),
+                        "snippet": { "text": get_snippet($file; (($finding.line_number // 0) - 3 | if . < 1 then 1 else . end)) }
+                      }
+                    }
                   }
-                }
+                ],
+                "partialFingerprints": {
+                  "secretHash": ($finding.hashed_secret // "UNKNOWN"),
+                  "secretHash/v1": ($finding.hashed_secret // "UNKNOWN"),
+                  "fileHash/v1": create_hash($file),
+                  "typeHash/v1": create_hash($finding.type // "UnknownType")
+                },
+                "properties": { "is_verified": ($finding.is_verified // false) }
               }
-            ],
-            "partialFingerprints": {
-              "secretHash": ($finding.hashed_secret // "UNKNOWN"),
-              "secretHash/v1": ($finding.hashed_secret // "UNKNOWN"),
-              "fileHash/v1": create_hash($file),
-              "typeHash/v1": create_hash($finding.type // "UnknownType")
-            },
-            "properties": { "is_verified": ($finding.is_verified // false) }
-          }
-      ],
+          ]
+        else
+          []
+        end
+      ),
       "conversion": {
         "tool": { "driver": { "name": "detect-secrets-to-sarif", "informationUri": "https://iomergent.com" } }
       },
