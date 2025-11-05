@@ -200,12 +200,44 @@ runs:
         fi
         echo "::endgroup::"
 
+        echo "::group::Hook Output Debug"
+        echo "=== detect-secrets-output.json contents (from hook) ==="
+        cat detect-secrets-output.json || echo "Failed to read detect-secrets-output.json"
+        echo ""
+        echo "=== End of hook output ==="
+        echo "::endgroup::"
+
+        # Run a regular scan for comparison
+        echo "::group::Scan Output Debug (for comparison)"
+        echo "Running regular detect-secrets scan for comparison..."
+        detect-secrets scan \
+          "${SCAN_PATH}" \
+          --disable-plugin ArtifactoryDetector \
+          --disable-plugin Base64HighEntropyString \
+          --disable-plugin HexHighEntropyString \
+          --disable-plugin KeywordDetector \
+          $(if [[ -n "${EXCLUDE_REGEX}" ]]; then echo "--exclude-files ${EXCLUDE_REGEX}"; fi) \
+          > detect-secrets-scan-comparison.json 2>&1 || true
+        echo ""
+        echo "=== detect-secrets-scan-comparison.json contents (from regular scan) ==="
+        cat detect-secrets-scan-comparison.json || echo "Failed to read detect-secrets-scan-comparison.json"
+        echo ""
+        echo "=== End of scan comparison output ==="
+        echo "::endgroup::"
+
         jq \
           --arg repoUri "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
           --arg revision "${GITHUB_SHA}" \
           --arg branch "${GITHUB_REF_NAME}" \
           -f "${{ github.action_path }}/detect-secrets-to-sarif.jq" \
           detect-secrets-output.json > detect-secrets-results.sarif
+
+        echo "::group::SARIF Output Debug"
+        echo "=== detect-secrets-results.sarif contents ==="
+        cat detect-secrets-results.sarif || echo "Failed to read detect-secrets-results.sarif"
+        echo ""
+        echo "=== End of SARIF output ==="
+        echo "::endgroup::"
 
         # Primary count from raw detect-secrets JSON output before SARIF conversion
         # TODO: Need to add some tests for 0,1,2,3 secrets found
