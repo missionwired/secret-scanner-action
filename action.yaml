@@ -136,104 +136,134 @@ runs:
           echo "::warning::For production use, enable 'use-baseline: true' to track known secrets."
         fi
 
-        # Build scan command based on mode
-        if [[ "${USE_HOOK_MODE}" == "true" ]]; then
-          # Use hook mode - alerts only on NEW secrets not in baseline
-          # Convert baseline to absolute path for hook
-          BASELINE_ABS_PATH="$(cd "$(dirname "${BASELINE_FILE}")" && pwd)/$(basename "${BASELINE_FILE}")"
-          SCAN_CMD=(
-            detect-secrets-hook
-            --json
-            --baseline "${BASELINE_ABS_PATH}"
-          )
-          echo "::debug::Using detect-secrets hook mode (alerts on new secrets only)"
-          if [[ "${DEBUG_MODE}" == "true" ]]; then
-            echo "::debug::Baseline absolute path for hook: ${BASELINE_ABS_PATH}"
-          fi
-        else
-          # Use scan mode - shows ALL secrets
-          SCAN_CMD=(
-            detect-secrets
-            scan
-            "${SCAN_PATH}"
-          )
-          echo "::debug::Using detect-secrets scan mode (shows all secrets - not using baseline file)"
-        fi
+        # Build plugin disable flags (used by both modes)
+        PLUGIN_DISABLE_FLAGS=(
+          --disable-plugin ArtifactoryDetector
+          --disable-plugin Base64HighEntropyString
+          --disable-plugin HexHighEntropyString
+          --disable-plugin KeywordDetector
+        )
 
-        # # Add --all-files flag if explicitly requested (for build artifacts)
-        if [[ "${{ inputs.scan-all-files }}" == "true" && USE_HOOK_MODE == "false" ]]; then
-          SCAN_CMD+=(--all-files)
-          echo "::debug::Scanning all files including untracked/build artifacts"
-        else
-          echo "::debug::Scanning git-tracked files only"
-        fi
-
-        # Disable noisy plugins
-        SCAN_CMD+=(--disable-plugin ArtifactoryDetector)
-        SCAN_CMD+=(--disable-plugin Base64HighEntropyString)
-        SCAN_CMD+=(--disable-plugin HexHighEntropyString)
-        SCAN_CMD+=(--disable-plugin KeywordDetector)
-
+        # Build exclude flags (used by both modes)
+        EXCLUDE_FLAGS=()
         if [[ -n "${EXCLUDE_REGEX}" ]]; then
-          SCAN_CMD+=(--exclude-files "${EXCLUDE_REGEX}")
+          EXCLUDE_FLAGS=(--exclude-files "${EXCLUDE_REGEX}")
           echo "::debug::Excluding files matching: ${EXCLUDE_REGEX}"
         fi
 
         echo "::group::Scanning for secrets"
-        if [[ "${DEBUG_MODE}" == "true" ]]; then
-          echo "[secret-scan] Command: ${SCAN_CMD[*]}"
-        fi
 
-        # Execute scan command based on mode
+        # HYBRID APPROACH: Use hook to detect NEW secrets, then scan for SARIF conversion
         if [[ "${USE_HOOK_MODE}" == "true" ]]; then
-          # Hook mode requires file list as arguments
-          # Find all files excluding patterns
-          if [[ -n "${EXCLUDE_REGEX}" ]]; then
-            FILES_TO_SCAN=$(find "${SCAN_PATH}" -type f ! -path "*/${EXCLUDE_REGEX}*" ! -name "*.pyc" 2>/dev/null || true)
-          else
-            FILES_TO_SCAN=$(find "${SCAN_PATH}" -type f ! -name "*.pyc" 2>/dev/null || true)
+          echo "::notice::Using baseline mode - only NEW secrets will be reported"
+
+          # Convert baseline to absolute path for hook
+          BASELINE_ABS_PATH="$(cd "$(dirname "${BASELINE_FILE}")" && pwd)/$(basename "${BASELINE_FILE}")"
+          if [[ "${DEBUG_MODE}" == "true" ]]; then
+            echo "::debug::Baseline absolute path: ${BASELINE_ABS_PATH}"
           fi
 
-          if [[ -z "${FILES_TO_SCAN}" ]]; then
-            echo "::warning::No files found to scan in ${SCAN_PATH}"
-            echo '{"version": "1.5.0", "results": {}}' > detect-secrets-output.json
+          # Step 1: Run hook to check for new secrets and get exit code
+          HOOK_EXIT_CODE=0
+          if git rev-parse --git-dir > /dev/null 2>&1; then
+            echo "::debug::Git repository detected - using git ls-files"
+            git ls-files -z | xargs -0 detect-secrets-hook \
+              --baseline "${BASELINE_ABS_PATH}" \
+              --json \
+              "${PLUGIN_DISABLE_FLAGS[@]}" \
+              "${EXCLUDE_FLAGS[@]}" \
+              > detect-secrets-hook-output.json 2>&1 || HOOK_EXIT_CODE=$?
           else
+            echo "::debug::Non-git directory - using find"
+            find "${SCAN_PATH}" -type f ! -name "*.pyc" -print0 | \
+              xargs -0 detect-secrets-hook \
+              --baseline "${BASELINE_ABS_PATH}" \
+              --json \
+              "${PLUGIN_DISABLE_FLAGS[@]}" \
+              "${EXCLUDE_FLAGS[@]}" \
+              > detect-secrets-hook-output.json 2>&1 || HOOK_EXIT_CODE=$?
+          fi
+
+          if [[ "${DEBUG_MODE}" == "true" ]]; then
+            echo "::debug::Hook exit code: ${HOOK_EXIT_CODE}"
+            echo "::debug::Hook output:"
+            cat detect-secrets-hook-output.json || echo "(empty or invalid JSON)"
+          fi
+
+          # Step 2: Count secrets from hook output
+          # Hook output format: {"file": ["msg1", "msg2"]} or just error messages
+          SECRET_COUNT=$(jq -r '
+            if type == "object" then
+              [.[] | if type == "array" then length else 0 end] | add // 0
+            else
+              0
+            end
+          ' detect-secrets-hook-output.json 2>/dev/null || echo 0)
+
+          # Validate SECRET_COUNT is a number
+          if [[ ! "${SECRET_COUNT}" =~ ^[0-9]+$ ]]; then
+            SECRET_COUNT=0
+          fi
+
+          echo "::debug::Hook detected ${SECRET_COUNT} new secret(s)"
+
+          # Step 3: Convert hook output to proper scan format for SARIF
+          if [[ ${SECRET_COUNT} -gt 0 ]]; then
+            echo "::notice::Hook detected ${SECRET_COUNT} new secret(s). Running full scan for SARIF conversion..."
+
+            # Run full scan with baseline to get proper JSON structure
+            detect-secrets scan "${SCAN_PATH}" \
+              --baseline "${BASELINE_FILE}" \
+              "${PLUGIN_DISABLE_FLAGS[@]}" \
+              "${EXCLUDE_FLAGS[@]}" \
+              > detect-secrets-output.json 2>&1 || true
+
             if [[ "${DEBUG_MODE}" == "true" ]]; then
-              FILE_COUNT=$(echo "$FILES_TO_SCAN" | wc -l | tr -d ' ')
-              echo "Files to scan: ${FILE_COUNT}"
+              echo "::debug::Scan output for SARIF conversion:"
+              cat detect-secrets-output.json
             fi
-            # Run hook with file list
-            echo "${FILES_TO_SCAN}" | xargs "${SCAN_CMD[@]}" > detect-secrets-output.json 2>&1 || true
+          else
+            echo "::notice::No new secrets detected by hook"
+            echo '{"version": "1.5.0", "results": {}}' > detect-secrets-output.json
           fi
+
+          # Step 4: Set failure flag if hook found secrets
+          if [[ ${HOOK_EXIT_CODE} -eq 1 ]]; then
+            echo "fail_after_upload=true" >> "${GITHUB_OUTPUT}"
+          fi
+
         else
-          # Scan mode works on directories
-          "${SCAN_CMD[@]}" > detect-secrets-output.json
+          # Standard scan mode (no baseline)
+          echo "::warning::Baseline mode disabled. Scanning all secrets in repository."
+
+          SCAN_CMD=(
+            detect-secrets
+            scan
+            "${SCAN_PATH}"
+            "${PLUGIN_DISABLE_FLAGS[@]}"
+            "${EXCLUDE_FLAGS[@]}"
+          )
+
+          # Add --all-files flag if explicitly requested
+          if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
+            SCAN_CMD+=(--all-files)
+            echo "::debug::Scanning all files including untracked/build artifacts"
+          else
+            echo "::debug::Scanning git-tracked files only"
+          fi
+
+          if [[ "${DEBUG_MODE}" == "true" ]]; then
+            echo "::debug::Scan command: ${SCAN_CMD[*]}"
+          fi
+
+          "${SCAN_CMD[@]}" > detect-secrets-output.json 2>&1 || true
+
+          if [[ "${DEBUG_MODE}" == "true" ]]; then
+            echo "::debug::Scan output:"
+            cat detect-secrets-output.json
+          fi
         fi
-        echo "::endgroup::"
 
-        echo "::group::Hook Output Debug"
-        echo "=== detect-secrets-output.json contents (from hook) ==="
-        cat detect-secrets-output.json || echo "Failed to read detect-secrets-output.json"
-        echo ""
-        echo "=== End of hook output ==="
-        echo "::endgroup::"
-
-        # Run a regular scan for comparison
-        echo "::group::Scan Output Debug (for comparison)"
-        echo "Running regular detect-secrets scan for comparison..."
-        detect-secrets scan \
-          "${SCAN_PATH}" \
-          --disable-plugin ArtifactoryDetector \
-          --disable-plugin Base64HighEntropyString \
-          --disable-plugin HexHighEntropyString \
-          --disable-plugin KeywordDetector \
-          $(if [[ -n "${EXCLUDE_REGEX}" ]]; then echo "--exclude-files ${EXCLUDE_REGEX}"; fi) \
-          > detect-secrets-scan-comparison.json 2>&1 || true
-        echo ""
-        echo "=== detect-secrets-scan-comparison.json contents (from regular scan) ==="
-        cat detect-secrets-scan-comparison.json || echo "Failed to read detect-secrets-scan-comparison.json"
-        echo ""
-        echo "=== End of scan comparison output ==="
         echo "::endgroup::"
 
         jq \
@@ -250,17 +280,20 @@ runs:
         echo "=== End of SARIF output ==="
         echo "::endgroup::"
 
-        # Primary count from raw detect-secrets JSON output before SARIF conversion
-        # TODO: Need to add some tests for 0,1,2,3 secrets found
-        # This jq expression gets the length of each array in the results object and sums them
-        # If an error occurs - it defaults to 0
-        SECRET_COUNT=$(jq -r '(.results? // {}) | [ .[] | length ] | add // 0' detect-secrets-output.json 2>/dev/null || echo 0)
-        if [[ -z "${SECRET_COUNT}" || "${SECRET_COUNT}" == "null" || ! "${SECRET_COUNT}" =~ ^[0-9]+$ ]]; then
-        echo "::warning::Secret count validation failed. Result was '${SECRET_COUNT}'. Defaulting count to 0 to avoid workflow disruption."
-          SECRET_COUNT=0
+        # Count secrets from detect-secrets-output.json
+        # In hybrid mode, SECRET_COUNT was already set by hook
+        # In scan mode, we need to count from the scan output
+        if [[ "${USE_HOOK_MODE}" != "true" ]]; then
+          SECRET_COUNT=$(jq -r '(.results? // {}) | [ .[] | length ] | add // 0' detect-secrets-output.json 2>/dev/null || echo 0)
+          if [[ -z "${SECRET_COUNT}" || "${SECRET_COUNT}" == "null" || ! "${SECRET_COUNT}" =~ ^[0-9]+$ ]]; then
+            echo "::warning::Secret count validation failed. Result was '${SECRET_COUNT}'. Defaulting count to 0 to avoid workflow disruption."
+            SECRET_COUNT=0
+          fi
         fi
+        # Note: SECRET_COUNT is already set from hook in hybrid mode (lines 195-206)
+
         echo "secret_count=${SECRET_COUNT}" >> "${GITHUB_OUTPUT}"
-        echo "[secret-scan] Findings: ${SECRET_COUNT}" 
+        echo "[secret-scan] Findings: ${SECRET_COUNT} secret(s)" 
 
         if [[ "${DEBUG_MODE}" == "true" ]]; then
           SARIF_COUNT=$(jq -r '[ .runs[]? | ( .results? // [] ) | length ] | add // 0' detect-secrets-results.sarif 2>/dev/null || echo 0)
