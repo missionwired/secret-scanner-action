@@ -229,6 +229,13 @@ runs:
             echo "${BASELINE_HASHES}" > baseline_hashes.txt
             echo "${CURRENT_HASHES}" > current_hashes.txt
 
+            if [[ "${DEBUG_MODE}" == "true" ]]; then
+              echo "::debug::Baseline Hashes:"
+              cat baseline_hashes.txt
+              echo "::debug::Current Scan Hashes:"
+              cat current_hashes.txt
+            fi
+
             # Find hashes that exist in current scan but NOT in baseline
             NEW_HASHES=$(comm -13 baseline_hashes.txt current_hashes.txt)
             NEW_SECRET_COUNT=$(echo "${NEW_HASHES}" | grep -c . || echo 0)
