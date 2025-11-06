@@ -2,6 +2,12 @@
 
 A GitHub Action that scans your codebase for hardcoded secrets using [detect-secrets](https://github.com/Yelp/detect-secrets) and uploads findings to GitHub Code Scanning.
 
+**Key Features:**
+- 🔍 **Hash-based baseline comparison** - Only alerts on NEW secrets, not known ones
+- 📦 **Build artifact scanning** - Scans Lambda builds, Docker images, compiled code
+- ⚡ **Zero false positive mode** - Baseline mode tracks approved secrets
+- 🔒 **SARIF integration** - Results appear in GitHub Security tab
+
 ## Quick Start
 
 ```yaml
@@ -49,15 +55,17 @@ jobs:
 
 ## Outputs
 
-- `secret_count`: Total number of findings detected
+- `secret_count`: Total number of secrets found in current scan
+- `new_secret_count`: Number of NEW secrets not in baseline (baseline mode only)
+- `baseline_count`: Number of known secrets in baseline (baseline mode only)
 
 ## Baseline Workflow (Recommended)
 
-Using a baseline file is **strongly recommended** for production environments. A baseline tracks known secrets in your repository, allowing you to:
-- Only alert on NEW secrets (not existing ones you've already addressed)
-- Catch secrets in git history
-- Maintain repository-specific false positive exclusions
-- Enable each team to manage their own secret detection policies
+Using a baseline file is **strongly recommended** for production environments. A baseline uses **hash-based comparison** to track known secrets, allowing you to:
+- **Only alert on NEW secrets** - Ignores known secrets already in baseline (hash comparison)
+- **Scan build artifacts** - Detects secrets bundled in Lambda builds, dependencies
+- **Reduce false positives** - Mark test fixtures as known secrets
+- **Per-repository policies** - Each team manages their own exclusions
 
 ### Initial Setup
 
@@ -66,13 +74,22 @@ Using a baseline file is **strongly recommended** for production environments. A
 # Install detect-secrets locally
 pip install detect-secrets
 
-# Generate initial baseline
-detect-secrets scan --all-files > .secrets.baseline
+# Generate baseline with SAME configuration as your scan
+# IMPORTANT: Use identical --disable-plugin and --exclude-files flags
+detect-secrets scan . \
+  --all-files \
+  --disable-plugin ArtifactoryDetector \
+  --disable-plugin Base64HighEntropyString \
+  --disable-plugin HexHighEntropyString \
+  --disable-plugin KeywordDetector \
+  > .secrets.baseline
 
 # Audit the baseline to mark false positives
 detect-secrets audit .secrets.baseline
-# (This opens an interactive prompt - mark findings as real or false positive)
+# (Interactive prompt - mark findings as real or false positive)
 ```
+
+**Critical:** Baseline MUST use same plugins/filters as scan to avoid false positives.
 
 2. **Commit the baseline to your repository:**
 ```bash
@@ -132,17 +149,28 @@ git push
 - **Document exclusions** - Add comments in commit messages explaining why secrets were added to baseline
 - **Use with git history scanning** - Baseline mode automatically includes `.git/` to catch historical secrets
 
-### Baseline Benefits
+### How Hash Comparison Works
 
-Using a baseline file provides:
+The action compares SHA-1 hashes of secrets:
 
-| Benefit | Description |
-|---------|-------------|
-| **Git history coverage** | Scans `.git/` directory to catch removed-but-not-rotated secrets |
-| **False positive management** | Per-secret audit decisions via interactive `detect-secrets audit` |
-| **Alert fatigue reduction** | Only alerts on NEW secrets, not existing baselined ones |
-| **Repository-specific config** | Each team manages their own exclusions and policies |
-| **Rotation tracking** | Documents which secrets were found, rotated, and baselined |
+```bash
+# Baseline contains:          Current scan finds:           Result:
+hash_abc123 (known)           hash_abc123 (same)           ✅ Ignored (in baseline)
+hash_def456 (known)           hash_xyz789 (new!)           ❌ FAIL (new secret!)
+```
+
+**Why hashes?**
+- Detects actual NEW secrets, not just count changes
+- Handles edge cases (old secret removed + new secret added = same count)
+- Identifies which specific secrets are new
+
+**Common Gotchas:**
+1. **Filter mismatch** - Baseline excludes test files but scan doesn't → false positives
+2. **Plugin mismatch** - Different `--disable-plugin` flags between baseline and pipeline scan → false positives
+3. **Build artifacts** - Baseline scans source, pipeline scans `.aws-sam/build/` → all build flagged as new
+4. **Dependencies** - Python packages have test fixtures with example secrets → exclude `/tests/` not entire build
+
+**Solution:** Generate baseline with identical configuration as your scan.
 
 ## What Gets Detected
 
