@@ -16,7 +16,7 @@ inputs:
   scan-all-files:
     description: Scan all files including untracked/build artifacts (true/false). Default scans all files.
     required: false
-    default: 'false'
+    default: 'true'
   fail-on-detection:
     description: Fail workflow if secrets detected (true/false).
     required: false
@@ -79,7 +79,7 @@ runs:
     - name: Install detect-secrets
       shell: bash
       run: |
-        echo "[secret-scan] Install phase - youre on the right branch louuuuuuuuuu"
+        echo "[secret-scan] Install phase"
         set -euo pipefail
         echo "::group::Installing detect-secrets"
         python3 -m pip install --upgrade pip --quiet
@@ -111,7 +111,6 @@ runs:
 
         # Handle baseline file and determine scan command
         BASELINE_EXISTS=false
-        USE_HOOK_MODE=false
 
         if [[ "${USE_BASELINE}" == "true" ]]; then
           if [[ -f "${BASELINE_FILE}" ]]; then
@@ -129,17 +128,17 @@ runs:
           echo "::warning::For production use, enable 'use-baseline: true' to track known secrets."
         fi
 
-          # Use scan mode - shows ALL secrets
-          SCAN_CMD=(
-            detect-secrets
-            scan
-            "${SCAN_PATH}"
-          )
-          echo "::debug::Using detect-secrets scan mode (shows all secrets - not using baseline file)"
-        
-        # TODO: If I pass in a scan path - do I need the --all-files flag?
-        # # Add --all-files flag if explicitly requested (for build artifacts)
-        if [[ "${{ inputs.scan-all-files }}" == "true" && USE_HOOK_MODE == "false" ]]; then
+        # Build scan command
+        SCAN_CMD=(
+          detect-secrets
+          scan
+          "${SCAN_PATH}"
+        )
+        echo "::debug::Using detect-secrets scan mode"
+
+        # Add --all-files flag to scan untracked/ignored files (e.g., build artifacts)
+        # By default, only git-tracked files in scan-path are scanned
+        if [[ "${{ inputs.scan-all-files }}" == "true" ]]; then
           SCAN_CMD+=(--all-files)
           echo "::debug::Scanning all files including untracked/build artifacts"
         else
@@ -172,7 +171,7 @@ runs:
         #
         # Why use hashes?
         # - Each secret has a unique 'hashed_secret' value (SHA-1 hash)
-        # - Comparing hashes is more robust than just counting secrets
+        # - Comparing hashes is more robust than counting secrets
         # - Detects if old secrets are removed but new ones added (net zero count change)
         # - Allows us to identify WHICH secrets are new
         # ============================================================================
@@ -193,7 +192,6 @@ runs:
         # Initialize variables for comparison logic
         NEW_SECRET_COUNT=0
         BASELINE_COUNT=0
-        SHOULD_FAIL=false
 
         # If baseline mode is enabled, perform hash-based comparison
         if [[ "${USE_BASELINE}" == "true" && "${BASELINE_EXISTS}" == "true" ]]; then
@@ -229,13 +227,6 @@ runs:
             echo "${BASELINE_HASHES}" > baseline_hashes.txt
             echo "${CURRENT_HASHES}" > current_hashes.txt
 
-            if [[ "${DEBUG_MODE}" == "true" ]]; then
-              echo "::debug::Baseline Hashes:"
-              cat baseline_hashes.txt
-              echo "::debug::Current Scan Hashes:"
-              cat current_hashes.txt
-            fi
-
             # Find hashes that exist in current scan but NOT in baseline
             NEW_HASHES=$(comm -13 baseline_hashes.txt current_hashes.txt)
             NEW_SECRET_COUNT=$(echo "${NEW_HASHES}" | grep -c . || echo 0)
@@ -257,8 +248,7 @@ runs:
 
           # Determine if we should fail the build
           if [[ ${NEW_SECRET_COUNT} -gt 0 ]]; then
-            # NEW secrets detected - this is a failure condition
-            SHOULD_FAIL=true
+            # NEW secrets detected - fail the build
             ERROR_MESSAGE="Found ${NEW_SECRET_COUNT} NEW secret(s) not in baseline (${BASELINE_COUNT} known secrets ignored). Check Security → Code scanning alerts."
 
             if [[ "${{ inputs.fail-on-detection }}" == "true" ]]; then
@@ -278,10 +268,8 @@ runs:
           echo "::debug::Baseline mode disabled - checking for any secrets"
 
           if [[ "${SECRET_COUNT}" -gt 0 ]]; then
-            SHOULD_FAIL=true
-
             if [[ "${{ inputs.upload-sarif }}" == "true" ]]; then
-              DETAILS_MESSAGE="Check Security → Code scanning alerts (category: detect-secrets)."
+              DETAILS_MESSAGE="Check Security → Code scanning (make sure to filter for your branch)."
             else
               DETAILS_MESSAGE="Review detect-secrets-results.sarif."
             fi
