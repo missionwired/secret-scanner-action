@@ -98,23 +98,6 @@ runs:
           echo "::notice::No verified secrets detected"
         fi
 
-        if [[ "${SECRET_COUNT}" -gt 0 ]]; then
-          if [[ "${{ inputs.upload-sarif }}" == "true" ]]; then
-            DETAILS_MESSAGE="Check Security → Code scanning alerts (category: detect-secrets)."
-          else
-            DETAILS_MESSAGE="Review detect-secrets-results.sarif."
-          fi
-          ERROR_MESSAGE="Found ${SECRET_COUNT} potential hardcoded secret(s). ${DETAILS_MESSAGE}"
-          if [[ "${{ inputs.fail-on-detection }}" == "true" ]]; then
-            echo "fail_after_upload=true" >> "${GITHUB_OUTPUT}"
-            echo "::error title=Secrets Detected::${ERROR_MESSAGE}"
-          else
-            echo "::warning title=Secrets Detected::${ERROR_MESSAGE}"
-          fi
-        else
-          echo "::notice title=Secret Scan Complete::No hardcoded secrets detected."
-        fi
-
     - name: Upload SARIF to GitHub Code Scanning
       if: ${{ inputs.upload-sarif == 'true' && steps.secret-scan.outputs.verified_count > 0 }}
       uses: github/codeql-action/upload-sarif@v4
