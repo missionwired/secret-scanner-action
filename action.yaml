@@ -1,54 +1,22 @@
 name: Detect Secrets Scanner
-description: Scan files for hardcoded secrets, convert results to SARIF, and optionally upload to GitHub Code Scanning.
+description: Scan for VERIFIED hardcoded secrets and upload to GitHub Code Scanning.
 inputs:
   scan-path:
-    description: Directory to scan for secrets (e.g., ./src) Defaults to repository root.
+    description: Directory to scan for secrets (e.g., ./src/.aws-sam/build)
     required: false
     default: .
   upload-sarif:
-    description: Upload SARIF results to GitHub Code Scanning (true/false).
-    required: false
-    default: 'true'
-  exclude-files-regex:
-    description: Regex pattern for files to exclude (single pattern).
-    required: false
-    default: ''
-  scan-all-files:
-    description: Scan all files including untracked/build artifacts (true/false). Default scans all files.
+    description: Upload SARIF results to GitHub Code Scanning
     required: false
     default: 'false'
   fail-on-detection:
-    description: Fail workflow if secrets detected (true/false).
+    description: Fail workflow if verified secrets detected
     required: false
     default: 'true'
   debug-mode:
-    description: Enable verbose diagnostic logging (true/false).
+    description: Enable verbose diagnostic logging
     required: false
     default: 'false'
-  always-upload:
-    description: Upload SARIF even if zero findings (true/false).
-    required: false
-    default: 'false'
-  wait-for-processing:
-    description: Wait for SARIF ingestion (true/false).
-    required: false
-    default: 'true'
-  checkout-path:
-    description: Path repository was checked out to (for path relativization in SARIF).
-    required: false
-    default: ${{ github.workspace }}
-  detect-secrets-version:
-    description: Pin detect-secrets version (e.g., 1.5.0). Blank = latest.
-    required: false
-    default: ''
-  use-baseline:
-    description: Use baseline file to track known secrets (recommended for production).
-    required: false
-    default: 'false'
-  baseline-file:
-    description: Path to detect-secrets baseline file (relative to repository root).
-    required: false
-    default: '.secrets.baseline'
 
 runs:
   using: composite
@@ -57,178 +25,77 @@ runs:
       if: ${{ inputs.debug-mode == 'true' }}
       shell: bash
       run: |
-        echo "::group::Debug Context"
-        echo "Event: $GITHUB_EVENT_NAME"
-        echo "Ref: $GITHUB_REF"
-        echo "SHA: $GITHUB_SHA"
-        echo "Workspace: $GITHUB_WORKSPACE"
+        echo "::group::Debug Info"
         echo "Scan Path: ${{ inputs.scan-path }}"
-        echo "Exclude Regex: ${{ inputs.exclude-files-regex }}"
-        echo "Always Upload: ${{ inputs.always-upload }}"
-        echo "Wait For Processing: ${{ inputs.wait-for-processing }}"
-        echo "Use Baseline: ${{ inputs.use-baseline }}"
-        echo "Baseline File: ${{ inputs.baseline-file }}"
-        echo "::endgroup::"
-
-        echo "::group::Dependency Check"
-        echo "✓ python3: $(python3 --version 2>&1 || echo 'NOT FOUND')"
-        echo "✓ pip: $(pip --version 2>&1 || pip3 --version 2>&1 || echo 'NOT FOUND')"
-        echo "✓ jq: $(jq --version 2>&1 || echo 'NOT FOUND')"
+        echo "SHA: $GITHUB_SHA"
+        echo "python3: $(python3 --version)"
+        echo "jq: $(jq --version)"
         echo "::endgroup::"
 
     - name: Install detect-secrets
       shell: bash
       run: |
-        echo "[secret-scan] Install phase - youre on the right branch louuuuuuuuuu"
         set -euo pipefail
-        echo "::group::Installing detect-secrets"
         python3 -m pip install --upgrade pip --quiet
-        if [[ -n "${{ inputs.detect-secrets-version }}" ]]; then
-          pip install "detect-secrets==${{ inputs.detect-secrets-version }}" --quiet
-        else
-          pip install detect-secrets --quiet 
-        fi
-        echo "::endgroup::"
+        pip install detect-secrets --quiet
 
-    - name: Scan for secrets and generate SARIF report
+    - name: Scan for verified secrets
       id: secret-scan
       shell: bash
       env:
-        EXCLUDE_REGEX: ${{ inputs.exclude-files-regex }}
-        DEBUG_MODE: ${{ inputs.debug-mode }}
         SCAN_PATH: ${{ inputs.scan-path }}
-        USE_BASELINE: ${{ inputs.use-baseline }}
-        BASELINE_FILE: ${{ inputs.baseline-file }}
+        DEBUG_MODE: ${{ inputs.debug-mode }}
       run: |
-        echo "[secret-scan] Scan phase"
         set -euo pipefail
 
-        # Basic input validation - check path exists
+        # Validate scan path exists
         if [[ ! -e "${SCAN_PATH}" ]]; then
           echo "::error::Scan path '${SCAN_PATH}' does not exist"
           exit 1
         fi
 
-        # Handle baseline file and determine scan command
-        BASELINE_EXISTS=false
-        USE_HOOK_MODE=false
-
-        if [[ "${USE_BASELINE}" == "true" ]]; then
-          if [[ -f "${BASELINE_FILE}" ]]; then
-            BASELINE_EXISTS=true
-            USE_HOOK_MODE=true
-            echo "::notice::Using existing baseline file: ${BASELINE_FILE}"
-          else
-            echo "::error::Baseline mode enabled but baseline file '${BASELINE_FILE}' not found."
-            echo "::error::Create baseline file first: 'detect-secrets scan --all-files > ${BASELINE_FILE}'"
-            echo "::error::Then audit it: 'detect-secrets audit ${BASELINE_FILE}'"
-            echo "::error::Finally commit the baseline file to your repository."
-            exit 1
-          fi
-        else
-          echo "::warning::Baseline mode disabled. Git history will be scanned and may produce repeated alerts."
-          echo "::warning::For production use, enable 'use-baseline: true' to track known secrets."
-        fi
-
-        # Build scan command based on mode
-        if [[ "${USE_HOOK_MODE}" == "true" ]]; then
-          # Use hook mode - alerts only on NEW secrets not in baseline
-          SCAN_CMD=(
-            detect-secrets-hook
-            --json
-            --baseline "${BASELINE_FILE}"
-          )
-          echo "::debug::Using detect-secrets hook mode (alerts on new secrets only)"
-        else
-          # Use scan mode - shows ALL secrets
-          SCAN_CMD=(
-            detect-secrets
-            scan
-            "${SCAN_PATH}"
-          )
-          echo "::debug::Using detect-secrets scan mode (shows all secrets - not using baseline file)"
-        fi
-
-        # # Add --all-files flag if explicitly requested (for build artifacts)
-        if [[ "${{ inputs.scan-all-files }}" == "true" && USE_HOOK_MODE == "false" ]]; then
-          SCAN_CMD+=(--all-files)
-          echo "::debug::Scanning all files including untracked/build artifacts"
-        else
-          echo "::debug::Scanning git-tracked files only"
-        fi
-
-        # Disable noisy plugins
-        SCAN_CMD+=(--disable-plugin ArtifactoryDetector)
-        SCAN_CMD+=(--disable-plugin Base64HighEntropyString)
-        SCAN_CMD+=(--disable-plugin HexHighEntropyString)
-        SCAN_CMD+=(--disable-plugin KeywordDetector)
-
-        if [[ -n "${EXCLUDE_REGEX}" ]]; then
-          SCAN_CMD+=(--exclude-files "${EXCLUDE_REGEX}")
-          echo "::debug::Excluding files matching: ${EXCLUDE_REGEX}"
-        fi
-
-        echo "::group::Scanning for secrets"
+        echo "::group::Scanning for verified secrets"
         if [[ "${DEBUG_MODE}" == "true" ]]; then
-          echo "[secret-scan] Command: ${SCAN_CMD[*]}"
+          echo "Command: detect-secrets scan ${SCAN_PATH} --all-files --only-verified"
         fi
 
-        # Execute scan command based on mode
-        if [[ "${USE_HOOK_MODE}" == "true" ]]; then
-          # Hook mode requires file list as arguments
-          # Find all files excluding patterns
-          if [[ -n "${EXCLUDE_REGEX}" ]]; then
-            FILES_TO_SCAN=$(find "${SCAN_PATH}" -type f ! -path "*/${EXCLUDE_REGEX}*" ! -name "*.pyc" 2>/dev/null || true)
-          else
-            FILES_TO_SCAN=$(find "${SCAN_PATH}" -type f ! -name "*.pyc" 2>/dev/null || true)
-          fi
-
-          if [[ -z "${FILES_TO_SCAN}" ]]; then
-            echo "::warning::No files found to scan in ${SCAN_PATH}"
-            echo '{"version": "1.5.0", "results": {}}' > detect-secrets-output.json
-          else
-            if [[ "${DEBUG_MODE}" == "true" ]]; then
-              FILE_COUNT=$(echo "$FILES_TO_SCAN" | wc -l | tr -d ' ')
-              echo "Files to scan: ${FILE_COUNT}"
-            fi
-            # Run hook with file list
-            echo "${FILES_TO_SCAN}" | xargs "${SCAN_CMD[@]}" > detect-secrets-output.json 2>&1 || true
-          fi
-        else
-          # Scan mode works on directories
-          "${SCAN_CMD[@]}" > detect-secrets-output.json
-        fi
+        # Scan for VERIFIED secrets only - live credentials
+        # --all-files: Scan all files including untracked/gitignored (e.g., build artifacts)
+        # --only-verified: Only return secrets that can be verified (network calls to check if valid)
+        detect-secrets scan "${SCAN_PATH}" --all-files --only-verified > detect-secrets-output.json
         echo "::endgroup::"
 
-        jq \
-          --arg repoUri "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-          --arg revision "${GITHUB_SHA}" \
-          --arg branch "${GITHUB_REF_NAME}" \
-          -f "${{ github.action_path }}/detect-secrets-to-sarif.jq" \
-          detect-secrets-output.json > detect-secrets-results.sarif
+        # Count verified secrets found
+        VERIFIED_COUNT=$(jq -r '(.results? // {}) | [.[] | length] | add // 0' detect-secrets-output.json)
 
-        # Primary count from raw detect-secrets JSON output before SARIF conversion
-        # TODO: Need to add some tests for 0,1,2,3 secrets found
-        # This jq expression gets the length of each array in the results object and sums them
-        # If an error occurs - it defaults to 0
-        SECRET_COUNT=$(jq -r '(.results? // {}) | [ .[] | length ] | add // 0' detect-secrets-output.json 2>/dev/null || echo 0)
-        if [[ -z "${SECRET_COUNT}" || "${SECRET_COUNT}" == "null" || ! "${SECRET_COUNT}" =~ ^[0-9]+$ ]]; then
-        echo "::warning::Secret count validation failed. Result was '${SECRET_COUNT}'. Defaulting count to 0 to avoid workflow disruption."
-          SECRET_COUNT=0
-        fi
-        echo "secret_count=${SECRET_COUNT}" >> "${GITHUB_OUTPUT}"
-        echo "[secret-scan] Findings: ${SECRET_COUNT}" 
+        echo "verified_count=${VERIFIED_COUNT}" >> "${GITHUB_OUTPUT}"
+        echo "Found ${VERIFIED_COUNT} verified secret(s)"
 
-        if [[ "${DEBUG_MODE}" == "true" ]]; then
-          SARIF_COUNT=$(jq -r '[ .runs[]? | ( .results? // [] ) | length ] | add // 0' detect-secrets-results.sarif 2>/dev/null || echo 0)
-          echo "::group::SARIF Diagnostics"
-          echo "Raw Secret Count: ${SECRET_COUNT}"
-          echo "SARIF Secret Count: ${SARIF_COUNT}"
-          if [[ "${SARIF_COUNT}" != "${SECRET_COUNT}" ]]; then
-            echo "::warning::Mismatch between raw and SARIF counts (raw=${SECRET_COUNT}, sarif=${SARIF_COUNT})"
+        # Handle results
+        if [[ ${VERIFIED_COUNT} -gt 0 ]]; then
+          # Convert to SARIF
+          jq \
+            --arg repoUri "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --arg revision "${GITHUB_SHA}" \
+            --arg branch "${GITHUB_REF_NAME}" \
+            -f "${{ github.action_path }}/detect-secrets-to-sarif.jq" \
+            detect-secrets-output.json > detect-secrets-results.sarif
+
+          # Mark for failure
+          if [[ "${{ inputs.fail-on-detection }}" == "true" ]]; then
+            echo "fail_after_upload=true" >> "${GITHUB_OUTPUT}"
+            echo "::error::Found ${VERIFIED_COUNT} verified secret(s) - these are LIVE credentials!"
+          else
+            echo "::warning::Found ${VERIFIED_COUNT} verified secret(s)"
           fi
-          head -n 25 detect-secrets-results.sarif || true
-          echo "::endgroup::"
+
+          if [[ "${DEBUG_MODE}" == "true" ]]; then
+            echo "::group::SARIF Preview"
+            head -n 25 detect-secrets-results.sarif
+            echo "::endgroup::"
+          fi
+        else
+          echo "::notice::No verified secrets detected"
         fi
 
         if [[ "${SECRET_COUNT}" -gt 0 ]]; then
@@ -249,13 +116,11 @@ runs:
         fi
 
     - name: Upload SARIF to GitHub Code Scanning
-      if: ${{ inputs.upload-sarif == 'true' && (inputs.always-upload == 'true' || steps.secret-scan.outputs.secret_count > 0) }}
+      if: ${{ inputs.upload-sarif == 'true' && steps.secret-scan.outputs.verified_count > 0 }}
       uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: detect-secrets-results.sarif
         category: detect-secrets
-        wait-for-processing: ${{ inputs.wait-for-processing }}
-        checkout_path: ${{ inputs.checkout-path }}
 
     - name: SARIF Artifact (debug only)
       if: ${{ inputs.debug-mode == 'true' }}
